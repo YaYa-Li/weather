@@ -20,6 +20,7 @@ public class WeatherController {
 
     private final WeatherService weatherService;
 
+
     @Value("${server.port}")
     private int randomServerPort;
 
@@ -42,5 +43,10 @@ public class WeatherController {
     @GetMapping("/weather/port")
     public ResponseEntity<?> queryWeatherByCity() {
         return new ResponseEntity<>("weather service + " + randomServerPort, HttpStatus.OK);
+    }
+
+    @GetMapping("/weather/city/{city}")
+    public ResponseEntity<?> queryWeatherByCity2(@PathVariable String city){
+        return new ResponseEntity<>(weatherService.getWeatherByName(city), HttpStatus.OK);
     }
 }

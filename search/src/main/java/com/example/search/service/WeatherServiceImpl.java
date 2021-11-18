@@ -3,6 +3,11 @@ package com.example.search.service;
 
 import com.example.search.config.EndpointConfig;
 import com.example.search.pojo.City;
+import com.example.search.pojo.Consolidated_weather;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cloud.client.loadbalancer.LoadBalanced;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Recover;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -11,16 +16,25 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Service
 public class WeatherServiceImpl implements WeatherService{
 
+    @LoadBalanced
     private final RestTemplate restTemplate;
 
+    private final RestTemplate externalRestTemplate;
 
-    public WeatherServiceImpl(RestTemplate getRestTemplate) {
+
+    @Autowired
+    public WeatherServiceImpl(RestTemplate getRestTemplate, RestTemplate restTemplate_external) {
         this.restTemplate = getRestTemplate;
+        this.externalRestTemplate = restTemplate_external;
     }
+
 
     @Override
     @Retryable(include = IllegalAccessError.class)
@@ -40,6 +54,59 @@ public class WeatherServiceImpl implements WeatherService{
         Map<String, Map> ans = restTemplate.getForObject(EndpointConfig.queryWeatherById + id, HashMap.class);
         return ans;
     }
+
+    @Override
+    @Retryable(include = IllegalAccessError.class,value = RuntimeException.class, maxAttempts = 3, backoff = @Backoff(delay = 5000))
+    public List<City> getWeatherByName(String cities) {
+
+        System.out.println("Search service city name=="+cities);
+
+        List listOfCity = new ArrayList();
+        ExecutorService executor = Executors.newCachedThreadPool();
+        String[] citiesArr = cities.split(",");
+
+        for(String city: citiesArr){
+            System.out.println("city ====="+city);
+            /*
+             *  1.visit detail service to get city id
+             *  2.visit 3rd api to get city weather with city id
+             *  3. Add weather result to a list
+             */
+            CompletableFuture.supplyAsync(()->restTemplate.getForObject(EndpointConfig.queryIdByCityName + city, Integer.class), executor)
+                    .thenApplyAsync(cityId->{
+                        System.out.println("Search service city id=="+cityId);
+                        return externalRestTemplate.getForObject(EndpointConfig.queryWeatherById + cityId, City.class);
+                    })
+                    .thenAcceptAsync(city_weather->{
+                        System.out.println("Search service weather obj=="+city_weather);
+                         listOfCity.add(city_weather);
+                    });
+        }
+
+//        System.out.println("Search service city name=="+cities);
+//        int cityId = restTemplate.getForObject(EndpointConfig.queryIdByCityName + cities, Integer.class);
+//
+//        System.out.println("Search service city id=="+cityId);
+//        System.out.println("Search service url=="+EndpointConfig.queryWeatherById + cityId);
+//        City weather_obj = externalRestTemplate.getForObject(EndpointConfig.queryWeatherById + cityId, City.class);
+//
+//        System.out.println(weather_obj.getConsolidated_weather().toString());
+//        Consolidated_weather weatherDetail = weather_obj.getConsolidated_weather();
+//        System.out.println(weatherDetail.getThe_temp()+"-----@@###------"
+//        + weatherDetail.getWeather_state_name());
+//        listOfCity.add(weather_obj);
+
+        return listOfCity;
+    }
+
+    @Recover
+    public String failedOperation(Exception e){
+        return "The service is down:"+ e.getStackTrace();
+    }
+
+
+
+
 }
 
 
